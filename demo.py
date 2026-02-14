@@ -5,14 +5,13 @@ import imageio
 import numpy as np
 from PIL import Image
 
-from typing import Optional, Union, Tuple
+from typing import Tuple
 from scipy.spatial.transform import Rotation as R
 from tqdm import tqdm
 import time
 from pathlib import Path
 from worldgen.utils.splat_utils import SplatFile
 from worldgen import WorldGen
-import open3d as o3d
 import trimesh
 
 def quaternion_slerp(q1, q2, t):
@@ -46,12 +45,6 @@ class ViserServer:
         self.server.scene.set_up_direction("-y")
         self.server.scene.enable_default_lights(False)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.return_mesh = False
-
-        if args.return_mesh:
-            self.mesh = None
-            self.return_mesh = True
-            assert (not args.inpaint_bg), "inpaint_bg is not supported when return_mesh is True"
 
         if args.use_sharp:
             print("\033[92m" + "=" * 80 + "\033[0m")
@@ -108,17 +101,6 @@ class ViserServer:
             covariances=splat.covariances,
         )
     
-    def add_mesh(self, mesh: o3d.geometry.TriangleMesh):
-        if self.args.save_scene:
-            file_path = os.path.join(self.args.output_dir, "mesh.glb")
-            o3d.io.write_triangle_mesh(file_path, mesh)
-        vertices = np.asarray(mesh.vertices)
-        faces = np.asarray(mesh.triangles)
-        colors = np.asarray(mesh.vertex_colors)
-        trimesh_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        trimesh_mesh.visual.vertex_colors = colors
-        self.scene_mesh_handle = self.server.scene.add_mesh_trimesh(name="/scene_mesh", mesh=trimesh_mesh)
-
     def add_original_camera(self):
         h, w = 1080, 1920
         fov = np.deg2rad(90)
@@ -284,12 +266,12 @@ class ViserServer:
         if self.args.pano_image is not None:
             pano_image = Image.open(self.args.pano_image).convert("RGB")
             pano_image = pano_image.resize((2048, 1024))
-            scene = self.worldgen._generate_world(pano_image, return_mesh=self.return_mesh)
+            scene = self.worldgen._generate_world(pano_image)
         elif self.args.image is not None:
             image = Image.open(self.args.image).convert("RGB")
-            scene = self.worldgen.generate_world(self.args.prompt, image, return_mesh=self.return_mesh)
+            scene = self.worldgen.generate_world(self.args.prompt, image)
         else:
-            scene = self.worldgen.generate_world(self.args.prompt, return_mesh=self.return_mesh)
+            scene = self.worldgen.generate_world(self.args.prompt)
         return scene
 
     def set_bg(self, splat: SplatFile):
@@ -303,11 +285,8 @@ class ViserServer:
         print("\033[92m" + "=" * 70 + "\033[0m")
 
         scene = self.generate_world()
-        if self.return_mesh:
-            self.add_mesh(scene)
-        else:
-            self.add_gs(scene)
-            self.set_bg(scene)
+        self.add_gs(scene)
+        self.set_bg(scene)
         self.add_original_camera()
 
         print("\033[92m" + "=" * 70 + "\033[0m")
@@ -351,7 +330,6 @@ if __name__ == "__main__":
     parser.add_argument("--pano_image", type=str, default=None, help="Path to input Panorama image")
     parser.add_argument("--use_sharp", action="store_true", help="Whether to use the ml-sharp experimental feature")
     parser.add_argument("--inpaint_bg", action="store_true", help="Whether to inpaint the background")
-    parser.add_argument("--return_mesh", action="store_true", help="Whether to return the mesh")
     parser.add_argument("--save_scene", action="store_true", help="Whether to save the scene")
     parser.add_argument("--low_vram", action="store_true", help="Whether to use low VRAM")
     args = parser.parse_args()
